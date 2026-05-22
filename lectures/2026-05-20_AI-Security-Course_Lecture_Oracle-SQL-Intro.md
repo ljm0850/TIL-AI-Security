@@ -24,6 +24,16 @@
 - **PIVOT/UNPIVOT은 데이터 구조 변환이다.** 행↔열 변환을 자유롭게 할 수 있다는 건 단순히 보고서를 예쁘게 만드는 게 아니라, 데이터를 분석 목적에 맞게 재구성하는 능력이다.
 - **GROUP BY + HAVING + ROLLUP의 조합이 실무 보고서의 핵심이다.** 단순 집계에서 소계·총계까지 한 번의 쿼리로 뽑아낼 수 있다는 것은, 애플리케이션 레이어에서 루프를 돌릴 필요 없이 DB가 직접 요약 정보를 만들어준다는 의미다.
 
+### 📅 2026-05-22 (이어서)
+
+- **JOIN은 "옆으로 붙이는 것"이다.** EMP 테이블에 DEPTNO가 있어도 부서명을 볼 수 없다. JOIN은 그 부서명을 DEPT 테이블에서 찾아 옆에 붙여주는 연산이다. 이 감각을 잡으면 어떤 테이블을 어떤 키로 연결할지가 자연스럽게 보인다.
+- **INNER JOIN은 교집합이고, OUTER JOIN은 기준 테이블의 전체다.** LEFT OUTER JOIN은 왼쪽 테이블의 모든 행을 보여주고 오른쪽에 매칭이 없으면 NULL로 채운다. "어느 테이블이 기준인가"가 JOIN 선택의 핵심 판단 기준이다.
+- **다중 열 서브쿼리는 "동시에 만족"을 표현한다.** `WHERE sal IN (SELECT MAX(sal) ...)` 는 다른 부서의 최고 급여와 우연히 같은 사원까지 잡아낸다. `WHERE (deptno, sal) IN (...)`처럼 복합 조건으로 묶어야 진짜 "그 부서의 최고 급여 사원"을 정확히 뽑을 수 있다.
+- **트랜잭션은 DB 신뢰성의 최소 단위다.** COMMIT 전까지는 나만 보이고, 남은 못 본다. 이 고립성이 Lock으로 구현되고, Lock이 길어지면 데드락이 된다. ACID를 "개념"이 아니라 "잠금의 작동 원리"로 이해하면 실무에서 왜 트랜잭션을 짧게 유지해야 하는지가 납득된다.
+- **VARCHAR2는 가변이라 효율적으로 보이지만, 값이 자주 바뀌면 단편화가 생긴다.** 데이터가 늘어날 때 원래 자리에 못 들어가면 흩어져 저장되고 탐색이 느려진다. CHAR는 고정 크기라 항상 같은 자리를 쓴다. 잘 변하지 않는 코드성 데이터에는 CHAR가 더 적합한 이유가 여기에 있다.
+- **VIEW는 보안 도구다.** 복잡한 JOIN을 숨기는 편의성도 있지만, SQL 노출 시 원본 테이블 구조와 민감 컬럼을 숨길 수 있는 보안적 가치가 크다. AI 보안 과정에서 DB 보안을 생각할 때 VIEW는 컬럼 수준 접근 제어의 수단이 된다.
+- **VIEW·SP·FN은 모두 "재사용"이지만 재사용 대상이 다르다.** VIEW는 조회 구조, SP는 작업 절차, FN은 계산 로직을 재사용한다. 최근 실무는 DB 중심 → 애플리케이션 중심으로 이동 중이라 SP·FN 사용이 줄고 있지만, VIEW는 여전히 핵심이다.
+
 ---
 
 ## 1. 3일 프로젝트 리뷰 (강사님 피드백)
@@ -492,6 +502,394 @@ FROM emp;
 
 ---
 
+---
+
+## 📅 2026-05-22 이어서
+
+---
+
+## 11. JOIN — 테이블 결합
+
+### 핵심 개념
+
+- JOIN: 물리적으로 분리된 테이블들을 논리적 연관성에 따라 결합해 실행 시점에 메모리(PGA) 상에 임시 결과 집합을 생성하는 연산
+- **테이블 N개를 조인하려면 조인 조건이 최소 N-1개 필요** — 조건이 부족하면 카테시안 곱(Cartesian Product) 발생
+- ANSI JOIN(`JOIN ... ON`) 사용 권장 — DB 종속성 없이 어디서나 동작
+
+### 상세 내용
+
+**JOIN 유형 요약**
+
+| 유형                | 설명                                       | 특징                                           |
+| ------------------- | ------------------------------------------ | ---------------------------------------------- |
+| INNER JOIN (등가)   | 양쪽에 모두 존재하는 행만 반환             | 가장 많이 사용                                 |
+| INNER JOIN (비등가) | `BETWEEN` 등 범위 조건으로 결합            | 급여 등급 산정 등                              |
+| LEFT OUTER JOIN     | 왼쪽 테이블 전체 + 오른쪽 매칭 없으면 NULL | 기준 테이블이 핵심                             |
+| RIGHT OUTER JOIN    | 오른쪽 테이블 전체 + 왼쪽 매칭 없으면 NULL |                                                |
+| FULL OUTER JOIN     | 양쪽 모두 전체 출력                        | 오라클 `(+)` 문법으로는 불가, ANSI 표준만 가능 |
+| SELF JOIN           | 같은 테이블을 두 번 불러 계층 구조 처리    | 반드시 별칭 사용                               |
+| CROSS JOIN          | 조인 조건 없이 모든 행 조합 (카테시안 곱)  | 테스트 데이터 생성용                           |
+
+**INNER JOIN 문법 비교**
+
+```sql
+-- ANSI 표준 (권장)
+SELECT e.ename, d.dname
+FROM emp e
+INNER JOIN dept d ON e.deptno = d.deptno;
+
+-- 오라클 구문
+SELECT e.ename, d.dname
+FROM emp e, dept d
+WHERE e.deptno = d.deptno;
+```
+
+**비등가 조인 — 급여 등급 산정**
+
+```sql
+SELECT e.ename, e.sal, s.grade
+FROM emp e
+JOIN salgrade s ON e.sal BETWEEN s.losal AND s.hisal;
+```
+
+**OUTER JOIN — 오라클 `(+)` 주의사항**
+
+```sql
+-- LEFT OUTER: 없는 쪽(오른쪽)에 (+) 붙임
+WHERE e.deptno = d.deptno(+)
+
+-- FULL OUTER JOIN은 (+) 양쪽 사용 불가 → ANSI 표준 문법만 가능
+SELECT e.ename, d.dname
+FROM emp e
+FULL OUTER JOIN dept d ON e.deptno = d.deptno;
+```
+
+**SELF JOIN — 상사 이름 찾기**
+
+```sql
+-- INNER JOIN: 상사가 없는 KING 제외
+SELECT e.empno, e.ename, m.ename AS manager
+FROM emp e
+JOIN emp m ON e.mgr = m.empno;
+
+-- LEFT OUTER JOIN: 상사 없는 사원(KING)까지 포함
+SELECT e.empno, e.ename, m.ename AS manager
+FROM emp e
+LEFT OUTER JOIN emp m ON e.mgr = m.empno;
+```
+
+**다중 조인 — 순차 처리 주의**
+
+```sql
+-- 모든 부서·사원·급여등급·상사명 출력
+-- DBMS는 (A와 B) 먼저 조인 → 그 결과와 C 조인 순서로 처리
+-- 첫 번째 조인에서 누락된 데이터는 이후 OUTER로 살릴 수 없음
+SELECT d.dname, e.ename, s.grade, e2.ename AS manager_name
+FROM dept d
+LEFT OUTER JOIN emp e ON d.deptno = e.deptno
+LEFT OUTER JOIN salgrade s ON e.sal BETWEEN s.losal AND s.hisal
+LEFT OUTER JOIN emp e2 ON e.mgr = e2.empno;
+```
+
+**JOIN + GROUP BY + ROLLUP 결합**
+
+```sql
+-- 부서명(DNAME)·직무(JOB) 기준 급여 합계 + 부서 소계 + 전체 총계
+SELECT d.dname, e.job, SUM(e.sal) AS salary_sum
+FROM emp e
+JOIN dept d ON e.deptno = d.deptno
+GROUP BY ROLLUP(d.dname, e.job);
+-- 핵심: GROUP BY 먼저 해야 조인 결과를 바로 집계할 수 있어 연산이 줄어듦
+```
+
+---
+
+## 12. 서브쿼리 (Subquery)
+
+### 핵심 개념
+
+- 서브쿼리는 괄호`()`로 감싸며, 메인 쿼리보다 먼저 실행되어 결과를 전달하는 **선행 단계**
+- 단일행 서브쿼리: 결과 1행 → `=`, `>` 등 단일 비교 연산자 사용
+- 다중행 서브쿼리: 결과 여러 행 → `IN`, `ANY`, `ALL` 연산자 사용
+
+### 상세 내용
+
+**다중행 서브쿼리 — IN / ANY / ALL**
+
+```sql
+-- IN: 목록 중 하나라도 일치
+WHERE sal IN (SELECT MAX(sal) FROM emp GROUP BY deptno)
+-- ⚠️ 문제: 다른 부서의 최고 급여와 우연히 같은 사원까지 포함됨
+
+-- ANY: 최소 하나보다 크면 참 (= 최솟값보다 큰 것)
+WHERE sal > ANY (SELECT sal FROM emp WHERE deptno = 30)
+
+-- ALL: 모두보다 커야 참 (= 최댓값보다 큰 것)
+WHERE sal > ALL (SELECT sal FROM emp WHERE deptno = 30)
+-- ⚠️ ALL은 서브쿼리 결과에 NULL이 있으면 결과 없음
+```
+
+**다중 열 서브쿼리 — "동시에 만족" 표현**
+
+```sql
+-- 부서별 최고 급여 사원 정확하게 조회
+-- IN만 쓰면: 다른 부서에서 동일 금액 받는 사원도 포함됨
+-- (deptno, sal) 쌍으로 묶어야 "그 부서의 최고 급여 사원"을 정확히 특정
+
+SELECT ename, deptno, sal
+FROM emp
+WHERE (deptno, sal) IN (
+    SELECT deptno, MAX(sal) FROM emp GROUP BY deptno
+);
+
+-- 또는 인라인 뷰 방식 (더 명시적)
+SELECT e.deptno, e.ename, e.sal
+FROM emp e
+JOIN (
+    SELECT deptno, MAX(sal) AS max_sal
+    FROM emp
+    GROUP BY deptno
+) m ON e.deptno = m.deptno AND e.sal = m.max_sal;
+```
+
+**인라인 뷰(Inline View)와 WITH 절(CTE)**
+
+```sql
+-- 인라인 뷰: FROM 절 안의 일회용 서브쿼리 (쿼리 실행 동안만 존재)
+-- 조인 전 미리 데이터를 줄여 성능 최적화에 유용
+SELECT e.ename, d.dname, e.sal
+FROM (SELECT * FROM emp WHERE sal >= 2000) e
+JOIN dept d ON e.deptno = d.deptno;
+
+-- WITH 절(CTE): 서브쿼리에 이름 부여 → 반복 사용 + 가독성 향상
+-- 오라클은 반복 참조 시 임시 저장(Materialize)으로 성능 향상
+-- 재귀 쿼리(조직도, 트리 구조)에도 활용
+WITH dept_avg AS (
+    SELECT deptno, AVG(sal) AS avg_sal
+    FROM emp
+    GROUP BY deptno
+)
+SELECT e.ename, e.sal, a.avg_sal
+FROM emp e
+JOIN dept_avg a ON e.deptno = a.deptno
+WHERE e.sal > a.avg_sal;
+```
+
+---
+
+## 13. DML(데이터 조작어)과 트랜잭션
+
+### 핵심 개념
+
+- DML: 테이블 데이터를 생성(INSERT)·수정(UPDATE)·삭제(DELETE)하는 명령어
+- **UPDATE/DELETE는 WHERE 없으면 전체 데이터 변경/삭제** — 실행 전 반드시 SELECT로 대상 확인
+- 트랜잭션: DB 신뢰성을 보장하는 최소 작업 단위. COMMIT 전까지는 나만 볼 수 있고, 롤백 가능
+
+### 상세 내용
+
+**INSERT / UPDATE / DELETE 기본**
+
+```sql
+-- INSERT
+INSERT INTO t_user (user_id, user_name, join_date)
+VALUES ('USER01', '홍길동', SYSDATE);
+
+-- 대량 삽입 (Subquery INSERT) — 데이터 이관·백업에 활용
+INSERT INTO t_user_backup
+SELECT * FROM t_user WHERE join_date < '2025-01-01';
+
+-- UPDATE
+UPDATE t_user
+SET user_grade = 'VIP', point = point + 1000
+WHERE user_id = 'USER01';
+
+-- Subquery UPDATE — 다른 테이블 값을 참조해 반영
+UPDATE t_user u
+SET u.status = 'ACTIVE'
+WHERE EXISTS (SELECT 1 FROM t_order o WHERE o.user_id = u.user_id);
+
+-- DELETE
+DELETE FROM t_user
+WHERE last_login < ADD_MONTHS(SYSDATE, -12); -- 1년 이상 미접속자
+
+-- TRUNCATE: 구조는 유지, 데이터만 전체 삭제. DELETE보다 빠르지만 ROLLBACK 불가
+TRUNCATE TABLE t_user;
+```
+
+**NULL 주의 — 문자열 'null'과 실제 NULL은 다르다**
+
+```sql
+INSERT INTO dept_temp (deptno, dname, loc) VALUES (80, 'null', null);
+-- dname = 'null' (문자열), loc = NULL (진짜 NULL)
+SELECT * FROM dept_temp WHERE dname IS NULL; -- 조회 안 됨: dname은 문자열 'null'
+```
+
+**트랜잭션 ACID와 TCL**
+
+| ACID                | 설명                                                      |
+| ------------------- | --------------------------------------------------------- |
+| 원자성(Atomicity)   | All or Nothing — 하나라도 실패하면 전체 취소              |
+| 일관성(Consistency) | 완료 후에도 제약 조건 유지                                |
+| 고립성(Isolation)   | 진행 중인 트랜잭션의 중간 상태는 다른 세션에서 볼 수 없음 |
+| 지속성(Durability)  | 커밋된 결과는 장애 후에도 영구 보존                       |
+
+```sql
+-- TCL (트랜잭션 제어어)
+COMMIT;                 -- 영구 반영 (한 번 커밋하면 ROLLBACK 불가)
+ROLLBACK;               -- 마지막 COMMIT 이후 전체 취소 + Lock 해제
+SAVEPOINT sp_01;        -- 중간 지점 설정
+ROLLBACK TO sp_01;      -- 해당 지점까지만 부분 취소
+
+-- 예시: SAVEPOINT 활용
+INSERT INTO orders VALUES (101, '상품A', 2000);
+SAVEPOINT sp_01;
+UPDATE users SET point = 0 WHERE user_id = 'KIM'; -- 실수
+ROLLBACK TO sp_01;      -- sp_01 이후만 취소 (INSERT는 유지)
+COMMIT;
+```
+
+**세션·Lock·데드락**
+
+- DB는 **공유** 자원이라 A 세션이 특정 행을 수정 중이면 B 세션은 그 행에 접근 불가 (행 레벨 락)
+- Lock은 COMMIT 또는 ROLLBACK 시 해제 → 트랜잭션이 짧을수록 Lock 점유 시간 감소
+- **데드락**: A가 1번 행을 잠근 채 2번 행을 원하고, B가 2번 행을 잠근 채 1번 행을 원할 때 발생 → 오라클이 자동 감지 후 한쪽을 강제 취소(`ORA-00060`)
+- 예방: 일관된 작업 순서 유지 + 트랜잭션 최소화 + 사용자 입력 대기 중 Lock 금지
+
+---
+
+## 14. DDL(데이터 정의어)과 DB 객체
+
+### 핵심 개념
+
+- DDL은 실행 즉시 **Auto Commit** → ROLLBACK 불가. 실행 전 설계도 완벽 검토 필수
+- DDL 실행 시 이전의 모든 DML 작업도 함께 자동 커밋됨
+
+### 상세 내용
+
+**주요 DDL 명령어**
+
+```sql
+-- CREATE
+CREATE TABLE t_member (
+    mem_no    NUMBER(10)    PRIMARY KEY,
+    mem_id    VARCHAR2(20)  NOT NULL UNIQUE,
+    mem_age   NUMBER(3)     CHECK(mem_age > 0),
+    join_date DATE          DEFAULT SYSDATE,
+    dept_id   NUMBER(10)    REFERENCES t_dept(dept_id)
+);
+
+-- ALTER: 구조 변경
+ALTER TABLE t_student ADD    (email VARCHAR2(100));       -- 컬럼 추가
+ALTER TABLE t_student MODIFY (std_name VARCHAR2(100));    -- 타입/길이 변경
+ALTER TABLE t_student RENAME COLUMN birth TO birthday;    -- 컬럼명 변경
+ALTER TABLE t_student DROP COLUMN email;                  -- 컬럼 삭제
+
+-- DROP / TRUNCATE
+DROP TABLE 테이블명;      -- 테이블 자체 삭제
+TRUNCATE TABLE 테이블명;  -- 구조 유지, 데이터만 전체 삭제 (ROLLBACK 불가)
+```
+
+**VARCHAR2 vs CHAR — 단편화 주의**
+
+- `VARCHAR2(10)`: 실제 데이터 길이만큼 저장 → 공간 효율적
+- `CHAR(10)`: 항상 10자리 고정 저장 → 공간 낭비지만 갱신 시 단편화 없음
+- **값이 자주 바뀌는 VARCHAR2 컬럼**: 데이터가 늘어나면 원래 자리에 못 들어가 흩어져 저장됨 → 탐색 시 연속되지 않은 블록을 읽어야 해서 성능 저하
+- 결론: 길이가 고정이고 잘 변하지 않는 코드성 데이터(`Y/N`, `01/02` 등)에는 CHAR가 적합
+
+**주요 데이터 타입**
+
+| 타입           | 설명                                           | 용도                 |
+| -------------- | ---------------------------------------------- | -------------------- |
+| `NUMBER(p, s)` | 정수·실수 통합. p=전체 자릿수, s=소수점 자릿수 | 금액, 수량           |
+| `VARCHAR2(n)`  | 가변 길이 문자열                               | 이름, 주소 등 대부분 |
+| `CHAR(n)`      | 고정 길이 문자열                               | 코드, 플래그         |
+| `DATE`         | 연월일시분초                                   | 일반 날짜            |
+| `TIMESTAMP`    | 밀리초 + 시간대 포함                           | 금융 로그, 정밀 시각 |
+| `CLOB`         | 4GB 텍스트                                     | 게시판 본문, 약관    |
+| `BLOB`         | 이진 데이터                                    | 이미지, 동영상       |
+
+**인덱스 (Index)**
+
+- 풀스캔을 피하기 위해 특정 컬럼을 정렬해 별도 관리하는 B-Tree 구조 객체
+- PK·UNIQUE 제약 조건 설정 시 자동 생성
+- 검색 성능 향상 ↔ INSERT/UPDATE/DELETE 시 인덱스도 갱신되므로 수정 성능 저하
+
+```sql
+CREATE INDEX idx_emp_sal ON emp(sal);
+```
+
+| 스캔 방식         | 조건                              | 성능                          |
+| ----------------- | --------------------------------- | ----------------------------- |
+| Index Unique Scan | `WHERE pk = 값`                   | 가장 빠름                     |
+| Index Range Scan  | `WHERE sal BETWEEN 3000 AND 5000` | 일반적, 효율적                |
+| Index Full Scan   | 인덱스 전체를 읽어야 할 때        | 테이블 풀스캔보다 낫지만 느림 |
+
+---
+
+## 15. VIEW·SP·FN — 재사용성과 유지보수
+
+### 핵심 개념
+
+- 세 객체는 모두 "재사용"을 위한 DB 객체지만 재사용 대상이 다르다
+- **VIEW = 조회 구조 재사용 / SP = 작업 절차 재사용 / FN = 계산 로직 재사용**
+- 최근 실무 트렌드: DB 중심 → 애플리케이션 중심으로 이동 중. VIEW는 여전히 활발, SP·FN은 줄어드는 추세
+
+### 상세 내용
+
+**VIEW (뷰)**
+
+```sql
+-- 생성·수정 (OR REPLACE: 동일 이름 존재 시 삭제 후 재생성)
+CREATE OR REPLACE VIEW v_emp_details AS
+SELECT
+    e.employee_id,
+    e.first_name || ' ' || e.last_name AS full_name,
+    d.department_name,
+    e.salary * 12 AS annual_salary
+FROM employees e
+JOIN departments d ON e.department_id = d.department_id;
+
+-- 사용 — 복잡한 JOIN 없이 단 한 줄로
+SELECT * FROM v_emp_details WHERE department_name = 'IT';
+
+-- 삭제 (원본 테이블 데이터는 삭제되지 않음)
+DROP VIEW v_emp_details;
+```
+
+- **보안**: 원본 테이블의 민감 컬럼(급여, 주민번호)을 숨기고 허용된 컬럼만 노출 → **SQL 노출 시에도 원본 구조 보호**
+- **편의성**: 복잡한 JOIN을 캡슐화해 앱 개발자는 단순 SELECT만 사용
+- **논리적 독립성**: 원본 테이블 구조 변경 시 VIEW만 수정하면 앱 코드는 그대로
+- **주의**: VIEW 자체가 성능을 빠르게 해주지는 않음 → 기반 쿼리 최적화 필수. VIEW 안에 VIEW 중첩은 추적 어려워짐
+
+**SP (Stored Procedure)**
+
+- 여러 DML 작업(주문 생성 → 재고 감소 → 포인트 적립)을 하나의 단위로 묶어 DB에 저장
+- 트랜잭션 관리와 대량 데이터 처리에 강점
+- 단점: 로직이 DB에 숨어 코드 파악 어려움 + Git 관리 불편 + DB 종속성 증가
+
+**FN (Stored Function)**
+
+- 단일 값을 반환하는 재사용 계산 로직. SQL 문 내에서 직접 호출 가능
+- 단점: Scalar Function은 행마다 호출 → 대량 데이터에서 성능 급감 주의
+
+**실무 선택 기준 요약**
+
+| 객체 | 재사용 대상 | 적합한 상황                    | 주의                                      |
+| ---- | ----------- | ------------------------------ | ----------------------------------------- |
+| VIEW | 조회 구조   | 공통 조회, 보안 컬럼 숨기기    | VIEW 중첩, 성능은 기반 쿼리에 달림        |
+| SP   | 작업 절차   | 배치, 정산, 트랜잭션 중요 작업 | 로직 분산, 버전 관리 어려움               |
+| FN   | 계산 로직   | 단순 반복 계산, 공통 포맷      | 대량 데이터에서 Scalar Function 성능 주의 |
+
+---
+
+## 아직 찾아보지 않은 것
+
+- B-Tree 인덱스 vs Bitmap 인덱스 — 오라클에서 언제 Bitmap을 선택하는가
+- 실행 계획(Execution Plan) 직접 읽는 법 — `EXPLAIN PLAN FOR` 사용법
+- SP가 줄어드는 구체적인 이유 — ORM(JPA 등)과의 관계
+
+---
+
 ## 찾아본 것
 
 | 주제                                   | 찾아본 날짜 | 내용 요약 또는 링크                                          | 출처                                                    |
@@ -499,7 +897,8 @@ FROM emp;
 | DIKW 모델                              | 2026-05-20  | Data → Information → Knowledge → Wisdom 계층 구조. SQL은 Data→Information 담당 | 강의 자료                                               |
 | SQL LIKE vs SUBSTR 인덱스 탐색         | 2026-05-21  | 별도 deep-dive 파일 참고                                     | [`../deep-dive/2026-05-21_SQL-LIKE-vs-SUBSTR-Index.md`] |
 | 글로벌 서비스 시간 처리 (UTC/Timezone) | 2026-05-21  | 별도 deep-dive 파일 참고                                     | [`../deep-dive/2026-05-21_Global-Service-Timezone.md`]  |
+| VIEW·SP·FN 유지보수 관점 정리          | 2026-05-22  | 별도 deep-dive 파일 참고                                     | [`../deep-dive/2026-05-22_SQL-VIEW-SP-FN.md`]           |
 
 ---
 
-*작성일: 2026-05-20 ~ 2026-05-21 | 인공지능 사관학교 AI 보안 과정*
+*작성일: 2026-05-20 ~ 2026-05-22 | 인공지능 사관학교 AI 보안 과정*
