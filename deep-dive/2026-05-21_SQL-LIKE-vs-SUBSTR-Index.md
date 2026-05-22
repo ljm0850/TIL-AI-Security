@@ -98,7 +98,7 @@ CREATE INDEX idx_suffix ON users(SUBSTR(name, -3, 3));
 WHERE SUBSTR(name, -3, 3) = 'kim'
 ```
 
-## 
+
 
 ## 출처
 
