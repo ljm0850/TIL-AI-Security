@@ -16,6 +16,14 @@
 
 > `<head>`는 정의하는 곳, `<body>`는 출력하는 곳 — 단순한 구분처럼 보이지만, 이게 바로 HTML이 "마크업과 출력을 분리한다"는 설계 원칙의 핵심이다. CSS도 마찬가지 — 구조(HTML)와 표현(CSS)을 분리하는 게 목적.
 
+### 📅 2026-06-02 (이어서)
+
+> 시맨틱 태그의 의미를 다시 생각하게 된 날이다. 기존엔 `<div>`에 CSS 입히면 브라우저에 보이는 결과는 같으니 태그의 의미가 크지 않다고 생각했다. 그런데 지금 AI가 HTML을 읽는 시대가 됐다는 걸 생각하면 — 시맨틱 태그가 단순히 "개발자 컨벤션"이 아니라 기계가 문서를 이해하는 근거가 된다. 관점이 바뀌었다.
+
+> `<datalist>` 같은 태그를 보면서 과거에 JavaScript로 직접 구현했던 기능들이 이미 HTML 스펙에 있다는 걸 알게 됐다. 그때 바닐라 CSS/HTML을 제대로 알았더라면 라이브러리 없이도 됐을 것들이 있다. "Tailwind 쓰지 말고 바닐라 CSS 쓰자"고 주장하는 이유를 이제야 이해했다 — 표준을 모른 채 도구에 의존하면 표준이 이미 해결한 것도 못 쓰게 된다.
+
+> `for`문으로 DOM에 요소를 반복 추가하면 매번 리렌더링이 일어난다는 것, 네이버가 HTML 변경 이슈를 감지하기 위해 주기적으로 체크 코드를 심어둔다는 것 — 이런 실무 디테일이 강의에서 나왔다. 보안 관점에서도 DOM 조작 감지는 중요한 이야기다.
+
 ---
 
 ## 1. WWW & HTTP
@@ -133,4 +141,100 @@ CSS  → CSS Parser  → CSSOM Tree ─┘
 
 ---
 
-*작성일: 2026-06-01 | 인공지능 사관학교 AI 보안 과정*
+---
+
+## 📅 2026-06-02 이어서
+
+### 5. 시맨틱 태그의 재발견
+
+기존엔 `<div>` + CSS와 시맨틱 태그의 렌더링 결과가 같으니 큰 차이가 없다고 생각했다. 그런데 AI가 HTML을 파싱하는 시대에는 태그가 가진 의미가 기계의 문서 이해에 직접 영향을 미친다. SEO도, 접근성도, AI 파싱도 — 결국 다 같은 이유다.
+
+```html
+<!-- 의미 없는 구조 -->
+<div class="header">...</div>
+<div class="nav">...</div>
+
+<!-- 시맨틱 구조 — 기계가 읽을 수 있다 -->
+<header>...</header>
+<nav>...</nav>
+```
+
+### 6. HTML이 이미 해결한 것들
+
+JavaScript로 직접 구현했던 기능들이 HTML 표준에 이미 있다.
+
+**`<datalist>` — 자동완성 입력 필드**
+
+```html
+<input type="text" name="local" list="local" />
+<datalist id="local">
+    <option value="경기">경기도</option>
+    <option value="서울">서울시</option>
+    <option value="인천">인천시</option>
+</datalist>
+```
+
+JavaScript로 구현하던 검색/필터 기능을 HTML 한 줄로 처리. 정규식 검증(`<input type="email">`, `pattern` 속성)도 마찬가지.
+
+**CSS3 고급 기능들**
+
+강의 자료에서 다룬 범위 중 주요한 것들:
+
+| 기능 | 속성 | 설명 |
+|---|---|---|
+| CSS 우선순위 | `!important > inline > #id > .class > tag > 상속` | 동일 속성은 마지막 선언이 override |
+| Box Model | `margin / border / padding / content` | 모든 요소의 공간 계산 기준 |
+| 배치 | `position: static\|relative\|absolute\|fixed` | 레이아웃 흐름 제어 |
+| 미디어 쿼리 | `@media screen and (min-width: 401px)` | 반응형 레이아웃 |
+| 애니메이션 | `@keyframes`, `animation-*` | CSS만으로 동적 효과 |
+| 변환 | `transform: rotate\|scale\|translate\|skew` | 2D/3D 요소 변형 |
+
+### 7. DOM과 렌더링 성능
+
+**DOM 조작 시 리렌더링 발생**
+
+```javascript
+// 나쁜 패턴: 반복마다 DOM 변경 → 매번 리렌더링
+for (let i = 0; i < 1000; i++) {
+    document.body.appendChild(document.createElement('div'));
+}
+
+// 좋은 패턴: DocumentFragment로 묶어서 한 번에 삽입
+const fragment = document.createDocumentFragment();
+for (let i = 0; i < 1000; i++) {
+    fragment.appendChild(document.createElement('div'));
+}
+document.body.appendChild(fragment);
+```
+
+**브라우저 자료저장소 (Application 탭)**
+
+- Cookie / localStorage: 기본 클라이언트 저장
+- IndexedDB: 오프라인 지원 / 모바일 PWA에서 주로 사용
+- Service Worker: 멀티스레드, 오프라인 캐싱 처리
+- Manifest: PWA 앱 메타 정보
+
+**DOM 변경 감지 — 보안 관점**
+
+네이버는 HTML 변경으로 인한 이슈를 줄이기 위해 일정 시간마다 DOM 상태를 체크하는 코드를 심어둔다고 한다. 이건 보안 관점에서도 중요한 패턴 — 페이지 위변조 감지에 DOM 감지 로직이 쓰인다.
+
+---
+
+## 아직 찾아보지 않은 것
+
+- Reflow vs Repaint 차이 — DOM 변경 시 항상 둘 다 발생하는 건지, 언제 Repaint만 일어나는지
+- `<canvas>` vs `<svg>` 성능 비교 — 실시간 데이터 시각화는 canvas, 정밀 고화질은 svg라는 기준의 구체적 근거
+- CSS `!important` 사용이 안티패턴으로 여겨지는 이유
+- Service Worker와 Web Worker의 차이 — 둘 다 멀티스레드인데 어떻게 다른지
+- MutationObserver API — 네이버처럼 DOM 변경을 감지하는 표준 방법
+
+---
+
+## 찾아본 것
+
+| 주제 | 찾아본 날짜 | 내용 요약 또는 링크 | 출처 |
+|---|---|---|---|
+| | | | |
+
+---
+*작성일: 2026-06-01 ~ 2026-06-02 | 인공지능 사관학교 AI 보안 과정*
