@@ -235,6 +235,7 @@ def log_decorator(fn):
 | 주제 | 찾아본 날짜 | 내용 요약 또는 링크 | 출처 |
 |---|---|---|---|
 | `functools.wraps` 없이 데코레이터를 쓸 때 생기는 문제 | 2026-06-10 | `__name__` 손실로 로그 혼란, `inspect.signature()` 깨짐, FastAPI 등 프레임워크 파라미터 분석 실패, `__wrapped__` 없어 원본 함수 접근 불가 | → `../deep-dive/2026-06-10_functools-wraps-deep-dive.md` |
+| LLM 서비스에서 비동기 데코레이터 패턴 및 스트리밍 | 2026-06-10 | async wrapper + await 구조, 재시도(지수 백오프)/인증/시간 측정 데코레이터 패턴, 비동기와 SSE 스트리밍의 역할 차이 | → `../deep-dive/2026-06-10_Async-Decorator-LLM-Streaming.md` |
 
 ---
 *작성일: 2026-06-10 | 인공지능 사관학교 AI 보안 과정*
