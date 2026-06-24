@@ -847,7 +847,7 @@ SELECT
     d.department_name,
     e.salary * 12 AS annual_salary
 FROM employees e
-JOIN departments d ON e.department_id = d.department_id;
+	JOIN departments d ON e.department_id = d.department_id;
 
 -- 사용 — 복잡한 JOIN 없이 단 한 줄로
 SELECT * FROM v_emp_details WHERE department_name = 'IT';
