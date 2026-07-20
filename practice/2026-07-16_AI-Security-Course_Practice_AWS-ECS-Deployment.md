@@ -3,13 +3,12 @@
 > **과정**: 인공지능 사관학교 AI 보안 과정
 > **실습 유형**: 개인 실습 (ch02-3)
 > **관련 강의 파일**: `../lectures/2026-07-16_AI-Security-Course_Lecture_AWS-Deployment.md`
-> **⏳ 진행 중**: 2026-07-17 오전 완료 예정. 완료분·최종 느낀 점은 `## 📅 2026-07-17 이어서`로 추가한다.
 
 ---
 
 ## 느낀 것 / 배운 것
 
-### 📅 2026-07-16 (진행 중)
+### 📅 2026-07-16
 
 - (보안) **OIDC 역할 구성이 이 실습의 핵심 손맛**이었다. Trust Policy에서 `sub` 조건을 `repo:<org>/<repo>:*`로 직접 제한해 다른 저장소가 이 역할을 못 맡게 막는 걸 손으로 해봄. 어제~오늘 계속 나온 "secrets 표면 좁히기"가, 여기선 "누가 이 역할을 맡을 수 있나"를 문자열 조건으로 자르는 형태로 나타났다.
 - (보안) **역할이 용도별로 갈린다는 걸 실제로 만들며 체감** — 학습자 CLI용 IAM User / GitHub Actions OIDC 배포 role / ECS Task Execution Role. 각각 붙이는 정책이 다르고, 실습 편의로 AdministratorAccess를 쓰되 "운영에선 최소 7개 정책으로 축소"하라는 안내가 있었음. `iam:PassRole`을 `ecs-tasks`로만 조건 건 인라인 정책도 직접 붙임.
@@ -18,7 +17,7 @@
 - (디버깅 사고 도구) **"Request timed out"은 404/500 같은 앱 오류와 달리 거의 항상 네트워크 경로 문제**다. SYN에 대한 응답 자체가 없다는 뜻이라, 코드보다 SG·라우팅·NACL을 먼저 의심하는 게 효율적. 네트워크 계층과 앱 계층을 나눠 생각하는 게 핵심이었다.
 - **로그는 "기동됐다"까지만 알려주지 "외부에서 접근 가능한지"는 모른다.** ECS Exec으로 컨테이너 안에 직접 들어가 `curl 127.0.0.1:8000/health`를 때려 앱이 완전히 정상임을 먼저 확정한 게 결정적이었음 — 그때부터 문제를 ALB↔Task 네트워크 경로로 좁힐 수 있었다. 소거법(SG→TG→NACL→라우팅→포트매핑→내부 curl→ALB SG)이 실제로 통했다. 참고로 desired 1인데 태스크가 3~4개 뜨는 스래싱 자체가 "뭔가 반복 실패 중"이라는 신호였다.
 - (다음 프로젝트용 메모) **스트레스 테스트**, 팀 프로젝트 과정에서 간단하게라도 해보고 기록해두면 괜찮을 듯. (ALB·desired-count를 만지다 보니 실제 부하를 걸어보고 싶어짐)
-- ⏳ 아직 실습 중 — ECS 배포 Workflow 실행·퍼블릭 엔드포인트 확인·롤백까지 마무리 예정. 최종 느낀 점은 그때 이어서.
+- 로컬 `docker run`에서 시작한 게 결국 퍼블릭 ALB DNS로 `/health` 응답을 받는 데까지 이어졌다. push → 빌드 → ECR → ECS → ALB가 한 줄로 연결되는 걸 막힘 구간까지 뚫고 끝까지 통과해본 게 이번 실습의 가장 큰 수확.
 
 ---
 
@@ -29,7 +28,7 @@
 
 ---
 
-## 진행 과정 (진행 중 — 흐름 위주)
+## 진행 과정
 
 > 세션 설정·자격증명 입력값은 축약. AWS 콘솔 클릭 경로는 핵심만.
 
@@ -53,12 +52,12 @@
 - Target Group Targets가 `healthy`인지, CLI `describe-services`로 running=desired인지 대조.
 - ⚠️ **여기서 크게 막힘** — Target이 계속 `Unhealthy (Request timed out)`, 태스크 스래싱. 원인·소거법·해결은 아래 `## 🔧 문제 해결` 섹션 참조.
 
-### Step 12~13. ECS 배포 워크플로우 + 최종 대조 (진행 예정)
+### Step 12~13. ECS 배포 워크플로우 + 최종 대조
 - GitHub Secrets `ECS_CLUSTER`/`ECS_SERVICE` 등록, `task-definition.json` 자리표시자 채움.
 - `ecs-deploy.yml` push → render / deploy 스텝, `wait-for-service-stability` 안정 도달 확인.
 - Console/CLI 대조 + `http://<ALB-DNS>/health`로 퍼블릭 응답 확인.
 
-### Step 14~16. 롤백 / 병합 / 비용 관리 (진행 예정)
+### Step 14~16. 롤백 / 병합 / 비용 관리
 - `aws ecs list-task-definitions`로 이전 리비전 확인 후 `update-service --task-definition ...:<이전>`으로 롤백 (리비전 2개 이상일 때만).
 - `ch02-3-cd` → main 병합.
 - 실습 안 할 땐 `update-service --desired-count 0`으로 Fargate 실행 비용 절감 (ALB/ECR 비용은 별도로 남음).
@@ -102,11 +101,12 @@
 
 ---
 
-## 결과 / 산출물 (진행 중)
+## 결과 / 산출물
 - OIDC 배포 역할 + 스코핑된 Trust Policy / PassRole 인라인 정책.
 - ECR 리포 + ECR Push 워크플로우.
 - ECS 클러스터 / 태스크 정의 / 서비스 + ALB / Target Group.
-- (예정) ECS 배포 워크플로우, 퍼블릭 엔드포인트, 롤백 확인.
+- ECS 배포 워크플로우(render→deploy, wait-for-service-stability) + 퍼블릭 엔드포인트 `/health` 응답 확인.
+- 롤백 절차 확인, `ch02-3-cd` → main 병합.
 
 ---
 
@@ -121,7 +121,8 @@
 ---
 
 ## 다음에 이어서 할 것
-- ECS 배포 워크플로우 실행 → 퍼블릭 `/health` 확인 → 롤백 실습 → main 병합. 완료분은 `## 📅 2026-07-17 이어서`로 추가.
+- ch03 이후 실습이 이 배포 기반(main의 ch02-2/ch02-3)을 이어받는다.
+- 실습 안 하는 기간에는 `desired-count 0`으로 내려둘 것 (ALB·ECR 비용은 별도로 남음).
 
 ---
-*작성일: 2026-07-16 (진행 중) | 인공지능 사관학교 AI 보안 과정*
+*작성일: 2026-07-16 | 인공지능 사관학교 AI 보안 과정*
